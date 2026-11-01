@@ -14,7 +14,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 from media import MIME_TYPES, convert_video
 
-APP_VERSION = '1.1.0'
+APP_VERSION = '1.1.1'
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS = ROOT / 'downloads'
@@ -141,6 +141,9 @@ def download_attempt(job_id, url):
             'progress_hooks': [progress], 'overwrites': True,
             # Prevent a shared link from falling back to a generic website extractor.
             'allowed_extractors': ['TikTok', r'vm\.tiktok'],
+            # Select a complete video from the first metadata pass. Otherwise
+            # yt-dlp may retain a video-only + audio merge plan in info_dict.
+            'format': lambda context: iter([select_format(context)]),
         }
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -153,6 +156,8 @@ def download_attempt(job_id, url):
                    creator=info.get('uploader') or '',
                    resolution=f"{chosen.get('width') or '?'} × {chosen.get('height') or '?'}")
             # Reuse extracted metadata and source request headers, without re-extraction.
+            for key in ('requested_formats', 'requested_downloads', '__postprocessors', '__files_to_move'):
+                info.pop(key, None)
             info['formats'] = [chosen]
             ydl.params['format'] = chosen['format_id']
             ydl.process_ie_result(info, download=True)
