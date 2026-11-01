@@ -133,3 +133,67 @@ def test_cleanup_preserves_active_jobs(client):
     assert expired not in module.jobs
     assert not (module.DOWNLOADS / expired).exists()
     assert (module.DOWNLOADS / active / 'video.mp4').is_file()
+
+
+@pytest.mark.parametrize('failures,phase', [(0, 'transfer'), (1, 'extract'), (2, 'transfer'), (3, 'transfer')])
+def test_retry_download(client, monkeypatch, failures, phase):
+    from pathlib import Path
+    sessions, sleeps, retry_states = [], [], []
+    class FlakyYDL:
+        def __init__(self, options):
+            self.params = options
+            sessions.append(self)
+            self.attempt = len(sessions)
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def extract_info(self, url, download=False):
+            folder = Path(self.params['outtmpl']).parent
+            assert not (folder / 'video.mp4.part').exists()
+            if phase == 'extract' and self.attempt <= failures:
+                raise module.DownloadError('temporary extraction failure')
+            video = fmt('play')
+            video['url'] = f'https://example.com/fresh-{self.attempt}.mp4'
+            return {'id':'123', 'formats':[video]}
+        def process_ie_result(self, info, download=True):
+            output = Path(self.params['outtmpl'].replace('%(ext)s', 'mp4'))
+            assert info['formats'][0]['url'].endswith(f'fresh-{self.attempt}.mp4')
+            if self.attempt <= failures:
+                output.with_suffix('.mp4.part').write_bytes(b'incomplete')
+                raise module.DownloadError('HTTP Error 403: signed URL expired')
+            output.write_bytes(b'complete-video')
+    def sleep(delay):
+        sleeps.append(delay)
+        retry_states.append(dict(module.jobs['retry-test']))
+        assert module.jobs['retry-test']['state'] == 'retrying'
+        assert 'finished' not in module.jobs['retry-test']
+        assert not (module.DOWNLOADS / 'retry-test').exists()
+    monkeypatch.setattr(module, 'YoutubeDL', FlakyYDL)
+    monkeypatch.setattr(module.time, 'sleep', sleep)
+    module.jobs['retry-test'] = {'state':'queued'}
+    module.download('retry-test', 'https://vt.tiktok.com/ABC/')
+    job = module.jobs['retry-test']
+    assert len(sessions) == min(failures + 1, 3)
+    assert sleeps == [2, 4][:min(failures, 2)]
+    assert job['state'] == ('error' if failures == 3 else 'ready')
+    if failures == 3:
+        assert not (module.DOWNLOADS / 'retry-test').exists()
+        assert '3' in job['message']
+        assert 'signed URL' not in job['message']
+    else:
+        assert (module.DOWNLOADS / 'retry-test' / 'video.mp4').read_bytes() == b'complete-video'
+    assert job['retry_in_seconds'] is None
+
+
+def test_permanent_error_not_retried(client, monkeypatch):
+    attempts = []
+    def fail(job_id, url):
+        attempts.append(job_id)
+        raise ValueError('ไฟล์ใหญ่เกินขนาด')
+    monkeypatch.setattr(module, 'download_attempt', fail)
+    module.jobs['invalid'] = {'state':'queued'}
+    module.download('invalid', 'https://vt.tiktok.com/ABC/')
+    assert attempts == ['invalid']
+    assert module.jobs['invalid']['state'] == 'error'
+    assert module.jobs['invalid']['message'] == 'ไฟล์ใหญ่เกินขนาด'
