@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="app-token" content="__TOKEN__">
+  <title>ClearClip — TikTok Downloader</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="/">◧ ClearClip<span>LOCAL STUDIO</span></a><span class="online">● พร้อมใช้งานบนเครื่องคุณ</span></header>
+  <main>
+    <div class="eyebrow">TIKTOK VIDEO DOWNLOADER</div>
+    <h1>เก็บคลิปที่ชอบ<br><span>คมชัดทุกรายละเอียด.</span></h1>
+    <p class="intro">วางลิงก์ แล้วเก็บวิดีโอคุณภาพสูงสุดที่มี<br>เลือกไฟล์จากต้นทางที่ไม่มีลายน้ำ พร้อมเสียงต้นฉบับ</p>
+    <section class="panel" aria-label="ดาวน์โหลดวิดีโอ">
+      <form id="download-form">
+        <label for="url">ลิงก์วิดีโอ TikTok</label>
+        <div class="input-row"><input id="url" name="url" type="url" placeholder="https://www.tiktok.com/@creator/video/..." required autocomplete="off" maxlength="2048"><button id="submit" type="submit">ดาวน์โหลด <span>↓</span></button></div>
+        <div class="settings"><span>✦ คุณภาพสูงสุดอัตโนมัติ</span><span>MP4 + เสียง</span><span>ไม่บีบอัดซ้ำ</span></div>
+      </form>
+      <div id="result" class="result" hidden aria-live="polite">
+        <p id="status"></p>
+        <progress id="progress" max="100" aria-label="ความคืบหน้าดาวน์โหลด"></progress>
+        <h2 id="title"></h2><p id="details"></p>
+        <a id="save" class="save" hidden>บันทึกไฟล์ MP4 ↓</a>
+      </div>
+    </section>
+    <div class="steps"><article><b>01</b><h2>คัดลอกลิงก์</h2><p>เปิด TikTok แล้วเลือก<br>แชร์ → คัดลอกลิงก์</p></article><article><b>02</b><h2>วางแล้วดาวน์โหลด</h2><p>รองรับลิงก์เต็มและลิงก์สั้น<br>ระบบเลือกคุณภาพให้คุณ</p></article><article><b>03</b><h2>เก็บไว้ดูได้ทุกเมื่อ</h2><p>บันทึก MP4 ลงเครื่อง<br>พร้อมภาพและเสียงต้นฉบับ</p></article></div>
+    <aside>ความคมชัดขึ้นกับไฟล์ต้นทาง ไม่อัปสเกลภาพและไม่ลบลายน้ำที่ฝังอยู่ในภาพ หากไม่พบแหล่งไฟล์ที่รองรับ ระบบจะแจ้งให้ทราบ</aside>
+  </main>
+  <footer><span>ClearClip / เก็บรายละเอียด เก็บช่วงเวลา</span><span>ใช้กับวิดีโอของคุณหรือที่คุณได้รับอนุญาตให้ดาวน์โหลด</span></footer>
+</body>
+</html>
