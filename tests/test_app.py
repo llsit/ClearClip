@@ -41,6 +41,19 @@ def test_no_watermarked_fallback():
         module.select_format({'formats': [fmt('download')]})
 
 
+def test_split_stream_plan_prefers_hd_and_requires_audio():
+    hd = fmt('hd', 1080, 1920)
+    hd['acodec'] = 'none'
+    low = fmt('low', 576, 1024)
+    audio = dict(format_id='audio', url='https://example.com/audio', vcodec='none', acodec='aac', ext='m4a')
+    assert module.select_plan({'formats':[low, hd, audio]}) == [hd, audio]
+    assert module.select_plan({'formats':[low, hd]}) == [low]
+    marked = dict(hd, format_note='watermarked')
+    assert module.select_plan({'formats':[low, marked, audio]}) == [low]
+    with pytest.raises(ValueError):
+        module.select_plan({'formats':[hd]})
+
+
 def test_video_only_rejected():
     video = fmt('video-only')
     video['acodec'] = 'none'
