@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from flask import Flask, jsonify, request, send_file
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS = ROOT / 'downloads'
@@ -29,6 +30,8 @@ TTL = 3600
 MAX_FILE_BYTES = int(os.environ.get('MAX_FILE_MB', '128')) * 1024 * 1024
 MAX_STORAGE_BYTES = int(os.environ.get('MAX_STORAGE_MB', '512')) * 1024 * 1024
 janitor_started = False
+MAX_ATTEMPTS = 3
+RETRY_DELAYS = (2, 4)
 
 
 def cleanup_expired():
@@ -110,11 +113,13 @@ class QuietLogger:
     error = debug
 
 
-def download(job_id, url):
+def download_attempt(job_id, url):
     directory = DOWNLOADS / job_id
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        update(job_id, state='extracting', message='กำลังค้นหาไฟล์คุณภาพสูงสุด…')
+        attempt = jobs[job_id].get('attempt', 1)
+        update(job_id, state='extracting',
+               message=f'กำลังค้นหาไฟล์คุณภาพสูงสุด… (ครั้งที่ {attempt}/{MAX_ATTEMPTS})')
         started = time.monotonic()
 
         def progress(data):
@@ -139,6 +144,8 @@ def download(job_id, url):
             if not info or info.get('_type', 'video') != 'video':
                 raise ValueError('ลิงก์นี้ไม่ใช่วิดีโอเดี่ยวที่รองรับ')
             chosen = select_format(info)
+            if (chosen.get('filesize') or 0) > MAX_FILE_BYTES:
+                raise ValueError(f'ไฟล์ใหญ่เกิน {MAX_FILE_BYTES // 1048576} MB')
             update(job_id, title=info.get('title') or 'TikTok video',
                    creator=info.get('uploader') or '',
                    resolution=f"{chosen.get('width') or '?'} × {chosen.get('height') or '?'}")
@@ -151,12 +158,36 @@ def download(job_id, url):
             raise ValueError('ดาวน์โหลดไม่สำเร็จ หรือไฟล์เกินขนาดที่รองรับ')
         update(job_id, state='ready', percent=100, message='ไฟล์พร้อมแล้ว',
                bytes=output.stat().st_size, finished=time.time())
-    except Exception as error:
-        message = str(error) if isinstance(error, ValueError) else (
-            'อ่านหรือดาวน์โหลดไฟล์จาก TikTok ไม่สำเร็จ ลองลิงก์วิดีโอสาธารณะอื่น '
-            'หรืออัปเดต yt-dlp ตาม README')
-        update(job_id, state='error', message=message, finished=time.time())
+    except Exception:
         shutil.rmtree(directory, ignore_errors=True)
+        raise
+
+
+def download(job_id, url):
+    """Retry the same queued job with fresh metadata, cookies and file URLs."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        update(job_id, attempt=attempt, max_attempts=MAX_ATTEMPTS, percent=None,
+               title='', creator='', resolution='', retry_in_seconds=None)
+        try:
+            download_attempt(job_id, url)
+            return
+        except Exception as error:
+            retryable = isinstance(error, (DownloadError, TimeoutError, ConnectionError))
+            # Do not log exception text: upstream errors can include signed media URLs.
+            app.logger.warning('Download job %s attempt %d failed (%s)',
+                               job_id, attempt, type(error).__name__)
+            if retryable and attempt < MAX_ATTEMPTS:
+                delay = RETRY_DELAYS[attempt - 1]
+                update(job_id, state='retrying', percent=None, retry_in_seconds=delay,
+                       message=f'ดาวน์โหลดไม่สำเร็จ กำลังลองใหม่ครั้งที่ {attempt + 1}/{MAX_ATTEMPTS} ใน {delay} วินาที…')
+                time.sleep(delay)
+                continue
+            message = str(error) if isinstance(error, ValueError) else (
+                f'ดาวน์โหลดไม่สำเร็จหลังลอง {attempt} ครั้ง กรุณาลองอีกครั้งภายหลัง '
+                'หรือใช้ลิงก์วิดีโอสาธารณะอื่น')
+            update(job_id, state='error', message=message, percent=None,
+                   retry_in_seconds=None, finished=time.time())
+            return
 
 
 @app.before_request
