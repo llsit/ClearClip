@@ -1,0 +1,135 @@
+import pytest
+import app as module
+
+
+@pytest.mark.parametrize('url', [
+    'https://evil.com/a', 'https://tiktok.com.evil.com/@x/video/123',
+    'http://www.tiktok.com/@x/video/123', 'https://user@www.tiktok.com/@x/video/123',
+    'https://www.tiktok.com:123/@x/video/123', 'https://www.tiktok.com/@x',
+    'https://www.tiktok.com/@x/photo/123', None, 'https://127.0.0.1/a',
+])
+def test_reject_url(url):
+    with pytest.raises(ValueError):
+        module.validate_url(url)
+
+
+@pytest.mark.parametrize('url', [
+    'https://www.tiktok.com/@creator/video/123456',
+    'https://vt.tiktok.com/ABC123/', 'https://vm.tiktok.com/ABC123/',
+    'https://www.tiktok.com/t/ABC123/',
+])
+def test_valid_url(url):
+    assert module.validate_url(url + '?tracking=1') == url
+
+
+def fmt(id, width=1080, height=1920, **kwargs):
+    return dict(format_id=id, width=width, height=height, ext='mp4',
+                url='https://example.com/video.mp4', vcodec='h264', acodec='aac', **kwargs)
+
+
+def test_format_selection():
+    high = fmt('play-hd')
+    assert module.select_format({'formats': [
+        fmt('play-low', 540, 960), high,
+        fmt('download', 2160, 3840),
+        fmt('marked', 2160, 3840, format_note='watermarked'),
+    ]}) == high
+
+
+def test_no_watermarked_fallback():
+    with pytest.raises(ValueError):
+        module.select_format({'formats': [fmt('download')]})
+
+
+def test_video_only_rejected():
+    video = fmt('video-only')
+    video['acodec'] = 'none'
+    with pytest.raises(ValueError):
+        module.select_format({'formats': [video]})
+
+
+@pytest.fixture
+def client(monkeypatch, tmp_path):
+    module.jobs.clear()
+    monkeypatch.setattr(module, 'janitor_started', True)
+    monkeypatch.setattr(module, 'DOWNLOADS', tmp_path)
+    return module.app.test_client()
+
+
+def test_api_validation(client):
+    assert client.get('/').status_code == 200
+    assert client.post('/api/jobs', json={'url':'x'}).status_code == 403
+    auth = {'X-App-Token':module.TOKEN}
+    assert client.post('/api/jobs', json={'url':'x'}, headers=auth).status_code == 400
+    assert client.post('/api/jobs', json=[], headers=auth).status_code == 400
+    assert client.get('/api/jobs/unknown', headers=auth).status_code == 404
+    assert client.get('/files/unknown').status_code == 404
+    assert client.get('/', headers={'Host':'evil.com'}).status_code == 400
+
+
+def test_download_lifecycle(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(module, 'DOWNLOADS', tmp_path)
+    class FakeYDL:
+        def __init__(self, options):
+            self.params = options
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def extract_info(self, url, download=False):
+            return {'id':'123', 'title':'Sample', 'formats':[fmt('play')]}
+        def process_ie_result(self, info, download=True):
+            assert info['formats'][0]['format_id'] == 'play'
+            from pathlib import Path
+            Path(self.params['outtmpl'].replace('%(ext)s', 'mp4')).write_bytes(b'fake-mp4')
+    monkeypatch.setattr(module, 'YoutubeDL', FakeYDL)
+    monkeypatch.setattr(module.pool, 'submit', lambda func, *args: func(*args))
+    auth = {'X-App-Token':module.TOKEN}
+    response = client.post('/api/jobs', json={'url':'https://www.tiktok.com/@x/video/123'}, headers=auth)
+    assert response.status_code == 202
+    id = response.json['id']
+    assert client.get('/api/jobs/' + id, headers=auth).json['state'] == 'ready'
+    file = client.get('/files/' + id)
+    assert file.data == b'fake-mp4'
+    assert 'attachment' in file.headers['Content-Disposition']
+    file.close()
+
+
+def test_queue_cap(client):
+    module.jobs.update({str(i): {'state':'queued'} for i in range(4)})
+    assert client.post('/api/jobs', json={'url':'https://vt.tiktok.com/ABC/'},
+                       headers={'X-App-Token':module.TOKEN}).status_code == 429
+
+
+def test_short_link_extractor_enabled():
+    with module.YoutubeDL({'quiet': True, 'allowed_extractors': ['TikTok', r'vm\.tiktok']}) as ydl:
+        assert 'TikTok' in ydl._ies
+        assert 'TikTokVM' in ydl._ies
+
+
+def test_health_and_hosted_label(client, monkeypatch):
+    assert client.get('/healthz').json == {'status': 'ok'}
+    monkeypatch.setenv('RENDER_EXTERNAL_HOSTNAME', 'demo.onrender.com')
+    assert b'WEB STUDIO' in client.get('/').data
+
+
+def test_storage_reservation(client, monkeypatch):
+    monkeypatch.setattr(module, 'MAX_STORAGE_BYTES', 1)
+    response = client.post('/api/jobs', json={'url':'https://vt.tiktok.com/ABC/'},
+                           headers={'X-App-Token':module.TOKEN})
+    assert response.status_code == 429
+
+
+def test_cleanup_preserves_active_jobs(client):
+    import time
+    expired, active = 'a' * 32, 'b' * 32
+    for key in [expired, active]:
+        folder = module.DOWNLOADS / key
+        folder.mkdir()
+        (folder / 'video.mp4').write_bytes(b'video')
+    module.jobs[expired] = {'state':'ready', 'finished':time.time() - module.TTL - 1}
+    module.jobs[active] = {'state':'downloading'}
+    module.cleanup_expired()
+    assert expired not in module.jobs
+    assert not (module.DOWNLOADS / expired).exists()
+    assert (module.DOWNLOADS / active / 'video.mp4').is_file()
