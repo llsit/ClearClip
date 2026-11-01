@@ -14,7 +14,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 from media import MIME_TYPES, convert_video, merge_streams
 
-APP_VERSION = '1.2.0'
+APP_VERSION = '1.2.1'
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS = ROOT / 'downloads'
@@ -60,9 +60,9 @@ def cleanup_loop():
         time.sleep(60)
 
 
-def storage_used():
+def storage_used(root=None):
     total = 0
-    for path in DOWNLOADS.rglob('*'):
+    for path in (DOWNLOADS if root is None else root).rglob('*'):
         try:
             if path.is_file():
                 total += path.stat().st_size
@@ -239,8 +239,13 @@ def download(job_id, url):
             message = str(error) if isinstance(error, ValueError) else (
                 f'ดาวน์โหลดไม่สำเร็จหลังลอง {attempt} ครั้ง กรุณาลองอีกครั้งภายหลัง '
                 'หรือใช้ลิงก์วิดีโอสาธารณะอื่น')
+            error_code = type(error).__name__
+            if isinstance(error, DownloadError) and 'no video formats found' in str(error).lower():
+                error_code = 'NO_VIDEO_FORMATS'
+                message = ('อ่านลิงก์ TikTok ได้ แต่ไม่พบไฟล์วิดีโอที่ตัวดาวน์โหลดเข้าถึงได้ '
+                           'คลิปนี้จึงยังดาวน์โหลดไม่ได้ ไม่ใช่ปัญหาคิวเต็ม')
             update(job_id, state='error', message=message, percent=None,
-                   error_code=type(error).__name__, retry_in_seconds=None, finished=time.time())
+                   error_code=error_code, retry_in_seconds=None, finished=time.time())
             return
 
 
@@ -292,8 +297,9 @@ def create_job():
         cleanup_expired()
         active = sum(j['state'] not in ('ready', 'error') for j in jobs.values())
         used = storage_used()
-        reserved = sum(MAX_FILE_BYTES * 2
-                       for j in jobs.values() if j['state'] not in ('ready', 'error'))
+        # Partial files are already included in `used`; reserve only the remainder.
+        reserved = sum(max(0, MAX_FILE_BYTES * 2 - storage_used(DOWNLOADS / key))
+                       for key, j in jobs.items() if j['state'] not in ('ready', 'error'))
         required = MAX_FILE_BYTES * 2
         if used + reserved + required > MAX_STORAGE_BYTES:
             return jsonify(error='พื้นที่ชั่วคราวเต็ม กรุณารอให้ระบบล้างไฟล์เก่า'), 429
