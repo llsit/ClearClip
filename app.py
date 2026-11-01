@@ -12,9 +12,9 @@ from urllib.parse import urlsplit, urlunsplit
 from flask import Flask, jsonify, request, send_file
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
-from media import MIME_TYPES, convert_video
+from media import MIME_TYPES, convert_video, merge_streams
 
-APP_VERSION = '1.1.1'
+APP_VERSION = '1.2.0'
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS = ROOT / 'downloads'
@@ -108,6 +108,25 @@ def update(job_id, **values):
         jobs[job_id].update(values)
 
 
+def select_plan(info):
+    formats = info.get('formats', [])
+    audio = [f for f in formats if f.get('url') and f.get('vcodec') == 'none'
+             and f.get('acodec') not in (None, 'none') and f.get('ext') in ('m4a', 'mp3', 'mp4')]
+    videos = [f for f in formats if f.get('url') and f.get('ext') == 'mp4'
+              and f.get('vcodec') not in (None, 'none', 'bytevc2')
+              and (f.get('acodec') not in (None, 'none') or audio)
+              and 'watermark' not in (f.get('format_note') or '').lower()
+              and 'unplayable' not in (f.get('format_note') or '').lower()
+              and not (f.get('format_id') or '').startswith('download')]
+    if not videos:
+        raise ValueError('ไม่พบวิดีโอพร้อมเสียงที่รองรับและไม่มีลายน้ำ')
+    video = max(videos, key=lambda f: ((f.get('width') or 0) * (f.get('height') or 0),
+                                     f.get('tbr') or 0, f.get('filesize') or 0))
+    if video.get('acodec') not in (None, 'none'):
+        return [video]
+    return [video, max(audio, key=lambda f: (f.get('abr') or f.get('tbr') or 0, f.get('filesize') or 0))]
+
+
 class QuietLogger:
     def debug(self, message):
         pass
@@ -143,14 +162,15 @@ def download_attempt(job_id, url):
             'allowed_extractors': ['TikTok', r'vm\.tiktok'],
             # Select a complete video from the first metadata pass. Otherwise
             # yt-dlp may retain a video-only + audio merge plan in info_dict.
-            'format': lambda context: iter([select_format(context)]),
+            'format': lambda context: iter([select_plan(context)[0]]),
         }
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
             if not info or info.get('_type', 'video') != 'video':
                 raise ValueError('ลิงก์นี้ไม่ใช่วิดีโอเดี่ยวที่รองรับ')
-            chosen = select_format(info)
-            if (chosen.get('filesize') or 0) > MAX_FILE_BYTES:
+            plan = select_plan(info)
+            chosen = plan[0]
+            if sum(f.get('filesize') or 0 for f in plan) > MAX_FILE_BYTES:
                 raise ValueError(f'ไฟล์ใหญ่เกิน {MAX_FILE_BYTES // 1048576} MB')
             update(job_id, title=info.get('title') or 'TikTok video',
                    creator=info.get('uploader') or '',
@@ -158,9 +178,28 @@ def download_attempt(job_id, url):
             # Reuse extracted metadata and source request headers, without re-extraction.
             for key in ('requested_formats', 'requested_downloads', '__postprocessors', '__files_to_move'):
                 info.pop(key, None)
-            info['formats'] = [chosen]
-            ydl.params['format'] = chosen['format_id']
-            ydl.process_ie_result(info, download=True)
+            if len(plan) == 1:
+                info['formats'] = [chosen]
+                ydl.process_ie_result(info, download=True)
+            else:
+                paths = []
+                for index, stream in enumerate(plan):
+                    component = dict(info)
+                    component['formats'] = [stream]
+                    # A fresh explicit selector prevents cached merge plans.
+                    ydl.format_selector = lambda context: iter(context['formats'])
+                    path = directory / f'stream-{index}.{stream["ext"]}'
+                    ydl.params['outtmpl']['default'] = str(path)
+                    ydl.process_ie_result(component, download=True)
+                    if not path.is_file():
+                        raise DownloadError('Stream download incomplete')
+                    paths.append(path)
+                if sum(p.stat().st_size for p in paths) > MAX_FILE_BYTES:
+                    raise ValueError('ไฟล์ภาพและเสียงใหญ่เกินขนาดที่รองรับ')
+                update(job_id, state='merging', percent=None, message='กำลังรวมภาพความละเอียดสูงกับเสียง…')
+                merge_streams(*paths, directory / 'video.mp4', MAX_FILE_BYTES)
+                for path in paths:
+                    path.unlink()
         output = directory / 'video.mp4'
         if not output.is_file() or not output.stat().st_size:
             raise ValueError('ดาวน์โหลดไม่สำเร็จ หรือไฟล์เกินขนาดที่รองรับ')
@@ -253,9 +292,9 @@ def create_job():
         cleanup_expired()
         active = sum(j['state'] not in ('ready', 'error') for j in jobs.values())
         used = storage_used()
-        reserved = sum(MAX_FILE_BYTES * (1 if j.get('output_format', 'mp4') == 'mp4' else 2)
+        reserved = sum(MAX_FILE_BYTES * 2
                        for j in jobs.values() if j['state'] not in ('ready', 'error'))
-        required = MAX_FILE_BYTES * (1 if output_format == 'mp4' else 2)
+        required = MAX_FILE_BYTES * 2
         if used + reserved + required > MAX_STORAGE_BYTES:
             return jsonify(error='พื้นที่ชั่วคราวเต็ม กรุณารอให้ระบบล้างไฟล์เก่า'), 429
         if active >= 4 or len(jobs) >= 20:
