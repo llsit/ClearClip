@@ -6,6 +6,25 @@ from pathlib import Path
 MIME_TYPES = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'avi': 'video/x-msvideo'}
 
 
+def merge_streams(video, audio, output, max_bytes):
+    import imageio_ffmpeg
+    command = [imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-loglevel', 'error',
+               '-nostdin', '-y', '-i', str(video), '-i', str(audio),
+               '-map', '0:v:0', '-map', '1:a:0', '-c', 'copy', '-movflags', '+faststart',
+               '-fs', str(max_bytes + 1), str(output)]
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=120)
+        if result.returncode or not output.exists() or not output.stat().st_size:
+            raise ValueError('รวมภาพและเสียงไม่สำเร็จ')
+        if output.stat().st_size >= max_bytes:
+            raise ValueError('ไฟล์รวมใหญ่เกินขนาดที่รองรับ')
+    except Exception:
+        output.unlink(missing_ok=True)
+        raise
+    return output
+
+
 def convert_video(source, target_format, max_bytes, timeout=600):
     if target_format not in MIME_TYPES:
         raise ValueError('รองรับเฉพาะ MP4, MOV และ AVI')
