@@ -77,9 +77,15 @@ def test_download_lifecycle(client, monkeypatch, tmp_path):
         def __exit__(self, *args):
             pass
         def extract_info(self, url, download=False):
-            return {'id':'123', 'title':'Sample', 'formats':[fmt('play')]}
+            video_only = fmt('1080-video-only')
+            video_only['acodec'] = 'none'
+            assert list(self.params['format']({'formats': [video_only, fmt('play')]}))[0]['format_id'] == 'play'
+            return {'id':'123', 'title':'Sample', 'formats':[fmt('play')],
+                    'requested_formats':[video_only], '__files_to_move':{'missing.mp4':'video.mp4'},
+                    '__postprocessors':['stale-merger'], 'requested_downloads':[video_only]}
         def process_ie_result(self, info, download=True):
             assert info['formats'][0]['format_id'] == 'play'
+            assert not any(key in info for key in ('requested_formats', 'requested_downloads', '__files_to_move', '__postprocessors'))
             from pathlib import Path
             Path(self.params['outtmpl'].replace('%(ext)s', 'mp4')).write_bytes(b'fake-mp4')
     monkeypatch.setattr(module, 'YoutubeDL', FakeYDL)
