@@ -216,3 +216,27 @@ def test_permanent_error_not_retried(client, monkeypatch):
     assert attempts == ['invalid']
     assert module.jobs['invalid']['state'] == 'error'
     assert module.jobs['invalid']['message'] == 'ไฟล์ใหญ่เกินขนาด'
+
+
+def test_no_formats_message(client, monkeypatch):
+    def fail(*args):
+        raise module.DownloadError('No video formats found!')
+    monkeypatch.setattr(module, 'download_attempt', fail)
+    monkeypatch.setattr(module.time, 'sleep', lambda delay: None)
+    module.jobs['no-formats'] = {'state':'queued'}
+    module.download('no-formats', 'https://vt.tiktok.com/ABC/')
+    assert module.jobs['no-formats']['error_code'] == 'NO_VIDEO_FORMATS'
+    assert module.jobs['no-formats']['attempt'] == 3
+
+
+def test_partial_files_are_not_double_reserved(client, monkeypatch):
+    monkeypatch.setattr(module, 'MAX_FILE_BYTES', 100)
+    monkeypatch.setattr(module, 'MAX_STORAGE_BYTES', 400)
+    monkeypatch.setattr(module.pool, 'submit', lambda *args: None)
+    module.jobs['active'] = {'state':'downloading'}
+    directory = module.DOWNLOADS / 'active'
+    directory.mkdir()
+    (directory / 'partial.mp4').write_bytes(b'x' * 50)
+    result = client.post('/api/jobs', json={'url':'https://vt.tiktok.com/ABC/'},
+                         headers={'X-App-Token':module.TOKEN})
+    assert result.status_code == 202
