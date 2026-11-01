@@ -12,6 +12,9 @@ from urllib.parse import urlsplit, urlunsplit
 from flask import Flask, jsonify, request, send_file
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
+from media import MIME_TYPES, convert_video
+
+APP_VERSION = '1.1.0'
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS = ROOT / 'downloads'
@@ -156,8 +159,15 @@ def download_attempt(job_id, url):
         output = directory / 'video.mp4'
         if not output.is_file() or not output.stat().st_size:
             raise ValueError('ดาวน์โหลดไม่สำเร็จ หรือไฟล์เกินขนาดที่รองรับ')
+        output_format = jobs[job_id].get('output_format', 'mp4')
+        if output_format != 'mp4':
+            update(job_id, state='converting', percent=None,
+                   message=f'กำลังแปลงเป็น {output_format.upper()}… กรุณารอสักครู่')
+            converted = convert_video(output, output_format, MAX_FILE_BYTES)
+            output.unlink()
+            output = converted
         update(job_id, state='ready', percent=100, message='ไฟล์พร้อมแล้ว',
-               bytes=output.stat().st_size, finished=time.time())
+               output_format=output_format, bytes=output.stat().st_size, finished=time.time())
     except Exception:
         shutil.rmtree(directory, ignore_errors=True)
         raise
@@ -172,7 +182,7 @@ def download(job_id, url):
             download_attempt(job_id, url)
             return
         except Exception as error:
-            retryable = isinstance(error, (DownloadError, TimeoutError, ConnectionError))
+            retryable = not isinstance(error, ValueError)
             # Do not log exception text: upstream errors can include signed media URLs.
             app.logger.warning('Download job %s attempt %d failed (%s)',
                                job_id, attempt, type(error).__name__)
@@ -186,7 +196,7 @@ def download(job_id, url):
                 f'ดาวน์โหลดไม่สำเร็จหลังลอง {attempt} ครั้ง กรุณาลองอีกครั้งภายหลัง '
                 'หรือใช้ลิงก์วิดีโอสาธารณะอื่น')
             update(job_id, state='error', message=message, percent=None,
-                   retry_in_seconds=None, finished=time.time())
+                   error_code=type(error).__name__, retry_in_seconds=None, finished=time.time())
             return
 
 
@@ -212,7 +222,8 @@ def headers(response):
 
 @app.get('/')
 def index():
-    html = (ROOT / 'static' / 'index.html').read_text(encoding='utf-8').replace('__TOKEN__', TOKEN)
+    html = ((ROOT / 'static' / 'index.html').read_text(encoding='utf-8')
+            .replace('__TOKEN__', TOKEN).replace('__VERSION__', APP_VERSION))
     if os.environ.get('RENDER_EXTERNAL_HOSTNAME'):
         html = html.replace('LOCAL STUDIO', 'WEB STUDIO').replace('พร้อมใช้งานบนเครื่องคุณ', 'พร้อมใช้งานออนไลน์')
     return html
@@ -220,7 +231,7 @@ def index():
 
 @app.get('/healthz')
 def health():
-    return jsonify(status='ok')
+    return jsonify(status='ok', version=APP_VERSION)
 
 
 @app.post('/api/jobs')
@@ -228,18 +239,25 @@ def create_job():
     payload = request.get_json(silent=True)
     try:
         url = validate_url(payload.get('url') if isinstance(payload, dict) else None)
+        output_format = payload.get('format', 'mp4')
+        if not isinstance(output_format, str) or output_format not in MIME_TYPES:
+            raise ValueError('รองรับเฉพาะ MP4, MOV และ AVI')
     except ValueError as error:
         return jsonify(error=str(error)), 400
     with lock:
         cleanup_expired()
         active = sum(j['state'] not in ('ready', 'error') for j in jobs.values())
         used = storage_used()
-        if used + (active + 1) * MAX_FILE_BYTES > MAX_STORAGE_BYTES:
+        reserved = sum(MAX_FILE_BYTES * (1 if j.get('output_format', 'mp4') == 'mp4' else 2)
+                       for j in jobs.values() if j['state'] not in ('ready', 'error'))
+        required = MAX_FILE_BYTES * (1 if output_format == 'mp4' else 2)
+        if used + reserved + required > MAX_STORAGE_BYTES:
             return jsonify(error='พื้นที่ชั่วคราวเต็ม กรุณารอให้ระบบล้างไฟล์เก่า'), 429
         if active >= 4 or len(jobs) >= 20:
             return jsonify(error='คิวเต็ม กรุณารอสักครู่ (เก็บได้ 20 รายการต่อชั่วโมง)'), 429
         job_id = secrets.token_hex(16)
-        jobs[job_id] = dict(state='queued', message='รอคิวดาวน์โหลด…', percent=None)
+        jobs[job_id] = dict(state='queued', message='รอคิวดาวน์โหลด…', percent=None,
+                            output_format=output_format)
         pool.submit(download, job_id, url)
     return jsonify(id=job_id), 202
 
@@ -259,8 +277,10 @@ def file_download(job_id):
         job = jobs.get(job_id)
         if not job or job['state'] != 'ready':
             return jsonify(error='ไฟล์ยังไม่พร้อมหรือหมดอายุแล้ว'), 404
-        return send_file(DOWNLOADS / job_id / 'video.mp4', as_attachment=True,
-                         download_name=f'tiktok-{job_id[:8]}.mp4', mimetype='video/mp4')
+        output_format = job.get('output_format', 'mp4')
+        return send_file(DOWNLOADS / job_id / f'video.{output_format}', as_attachment=True,
+                         download_name=f'tiktok-{job_id[:8]}.{output_format}',
+                         mimetype=MIME_TYPES[output_format])
 
 
 if __name__ == '__main__':
