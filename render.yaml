@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: clearclip-tiktok
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-hosting.txt
+    startCommand: gunicorn --config gunicorn.conf.py app:app
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.12
+      - key: MAX_FILE_MB
+        value: 128
+      - key: MAX_STORAGE_MB
+        value: 512
