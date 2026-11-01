@@ -108,7 +108,7 @@ def test_short_link_extractor_enabled():
 
 
 def test_health_and_hosted_label(client, monkeypatch):
-    assert client.get('/healthz').json == {'status': 'ok'}
+    assert client.get('/healthz').json == {'status': 'ok', 'version': module.APP_VERSION}
     monkeypatch.setenv('RENDER_EXTERNAL_HOSTNAME', 'demo.onrender.com')
     assert b'WEB STUDIO' in client.get('/').data
 
