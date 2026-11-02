@@ -80,7 +80,8 @@ def test_split_stream_plan_prefers_hd_and_requires_audio():
     hd['acodec'] = 'none'
     low = fmt('low', 576, 1024)
     audio = dict(format_id='audio', url='https://example.com/audio', vcodec='none', acodec='aac', ext='m4a')
-    assert module.select_plan({'formats':[low, hd, audio]}) == [hd, audio]
+    assert module.select_plan({'formats':[low, hd, audio]}) == [hd, low]
+    assert module.select_plan({'formats':[hd, audio]}) == [hd, audio]
     assert module.select_plan({'formats':[low, hd]}) == [low]
     marked = dict(hd, format_note='watermarked')
     assert module.select_plan({'formats':[low, marked, audio]}) == [low]
