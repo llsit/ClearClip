@@ -14,7 +14,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 from media import MIME_TYPES, convert_video, merge_streams
 
-APP_VERSION = '1.3.0'
+APP_VERSION = '1.3.1'
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS = ROOT / 'downloads'
@@ -147,7 +147,11 @@ def select_plan(info):
                                      f.get('tbr') or 0, f.get('filesize') or 0))
     if video.get('acodec') not in (None, 'none') or not audio:
         return [video]
-    return [video, max(audio, key=lambda f: (f.get('abr') or f.get('tbr') or 0, f.get('filesize') or 0))]
+    # TikTok's standalone music track can be longer than the clip and omit its
+    # original dialogue. Prefer audio carried by a complete version of this video.
+    complete = [f for f in videos if f.get('acodec') not in (None, 'none')]
+    donors = complete or audio
+    return [video, max(donors, key=lambda f: (f.get('abr') or f.get('tbr') or 0, f.get('filesize') or 0))]
 
 
 class QuietLogger:
