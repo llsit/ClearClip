@@ -7,14 +7,14 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qs, urlencode
 
 from flask import Flask, jsonify, request, send_file
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 from media import MIME_TYPES, convert_video, merge_streams
 
-APP_VERSION = '1.2.1'
+APP_VERSION = '1.3.0'
 
 ROOT = Path(__file__).resolve().parent
 DOWNLOADS = ROOT / 'downloads'
@@ -71,20 +71,37 @@ def storage_used(root=None):
     return total
 
 
+EXTRACTORS = ['TikTok', r'vm\.tiktok', 'facebook', r'facebook:reel', 'Instagram']
+
+
 def validate_url(value):
     if not isinstance(value, str) or len(value) > 2048:
-        raise ValueError('กรุณาวางลิงก์ TikTok ที่ถูกต้อง')
+        raise ValueError('กรุณาวางลิงก์วิดีโอที่ถูกต้อง')
     parsed = urlsplit(value.strip())
-    if (parsed.scheme != 'https' or parsed.hostname not in
-            {'www.tiktok.com', 'tiktok.com', 'm.tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com'}
-            or parsed.username or parsed.password or parsed.port not in (None, 443)):
-        raise ValueError('รองรับเฉพาะลิงก์ HTTPS ของ TikTok เท่านั้น')
-    if not (re.fullmatch(r'/@[^/]+/video/\d+/?', parsed.path)
-            or (parsed.hostname in {'vm.tiktok.com', 'vt.tiktok.com'}
-                and re.fullmatch(r'/[A-Za-z0-9]+/?', parsed.path))
-            or re.fullmatch(r'/t/[A-Za-z0-9]+/?', parsed.path)):
-        raise ValueError('กรุณาใช้ลิงก์วิดีโอหรือลิงก์แชร์ ไม่ใช่ลิงก์โปรไฟล์')
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', ''))
+    host = parsed.hostname
+    if (parsed.scheme != 'https' or parsed.username or parsed.password
+            or parsed.port not in (None, 443)):
+        raise ValueError('กรุณาใช้ลิงก์ HTTPS ของ TikTok, Facebook หรือ Instagram')
+    query = ''
+    if host in {'www.tiktok.com', 'tiktok.com', 'm.tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com'}:
+        valid = (re.fullmatch(r'/@[^/]+/video/\d+/?', parsed.path)
+                 or (host in {'vm.tiktok.com', 'vt.tiktok.com'} and re.fullmatch(r'/[A-Za-z0-9]+/?', parsed.path))
+                 or re.fullmatch(r'/t/[A-Za-z0-9]+/?', parsed.path))
+    elif host in {'instagram.com', 'www.instagram.com'}:
+        valid = re.fullmatch(r'/(?:p|reel|reels|tv)/[A-Za-z0-9_-]+/?', parsed.path)
+    elif host in {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'}:
+        video_id = parse_qs(parsed.query).get('v', [''])[0]
+        valid = (re.fullmatch(r'/(?:reel/\d+|share/[vr]/[A-Za-z0-9]+|[^/]+/videos/(?:[^/]+/)?\d+)/?', parsed.path)
+                 or (parsed.path in {'/watch', '/watch/', '/video.php'} and video_id.isdigit()))
+        if video_id.isdigit():
+            query = urlencode({'v':video_id})
+    elif host in {'fb.watch', 'www.fb.watch'}:
+        valid = re.fullmatch(r'/[A-Za-z0-9_-]+/?', parsed.path)
+    else:
+        valid = False
+    if not valid:
+        raise ValueError('รองรับลิงก์วิดีโอ TikTok, Facebook Videos/Reels และ Instagram Reels/โพสต์วิดีโอเดี่ยว')
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ''))
 
 
 def select_format(info):
@@ -109,12 +126,18 @@ def update(job_id, **values):
 
 
 def select_plan(info):
-    formats = info.get('formats', [])
+    formats = [dict(f) for f in info.get('formats', [])]
+    for item in formats:
+        if item.get('ext') == 'mp4' and item.get('vcodec') is None:
+            item['vcodec'] = 'unknown'
+        if item.get('ext') == 'mp4' and item.get('acodec') is None:
+            item['acodec'] = 'unknown'
     audio = [f for f in formats if f.get('url') and f.get('vcodec') == 'none'
              and f.get('acodec') not in (None, 'none') and f.get('ext') in ('m4a', 'mp3', 'mp4')]
     videos = [f for f in formats if f.get('url') and f.get('ext') == 'mp4'
               and f.get('vcodec') not in (None, 'none', 'bytevc2')
-              and (f.get('acodec') not in (None, 'none') or audio)
+              and (f.get('acodec') not in (None, 'none') or audio
+                   or not any(x.get('acodec') not in (None, 'none') for x in formats))
               and 'watermark' not in (f.get('format_note') or '').lower()
               and 'unplayable' not in (f.get('format_note') or '').lower()
               and not (f.get('format_id') or '').startswith('download')]
@@ -122,7 +145,7 @@ def select_plan(info):
         raise ValueError('ไม่พบวิดีโอพร้อมเสียงที่รองรับและไม่มีลายน้ำ')
     video = max(videos, key=lambda f: ((f.get('width') or 0) * (f.get('height') or 0),
                                      f.get('tbr') or 0, f.get('filesize') or 0))
-    if video.get('acodec') not in (None, 'none'):
+    if video.get('acodec') not in (None, 'none') or not audio:
         return [video]
     return [video, max(audio, key=lambda f: (f.get('abr') or f.get('tbr') or 0, f.get('filesize') or 0))]
 
@@ -159,7 +182,7 @@ def download_attempt(job_id, url):
             'outtmpl': str(directory / 'video.%(ext)s'),
             'progress_hooks': [progress], 'overwrites': True,
             # Prevent a shared link from falling back to a generic website extractor.
-            'allowed_extractors': ['TikTok', r'vm\.tiktok'],
+            'allowed_extractors': EXTRACTORS,
             # Select a complete video from the first metadata pass. Otherwise
             # yt-dlp may retain a video-only + audio merge plan in info_dict.
             'format': lambda context: iter([select_plan(context)[0]]),
@@ -167,12 +190,12 @@ def download_attempt(job_id, url):
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
             if not info or info.get('_type', 'video') != 'video':
-                raise ValueError('ลิงก์นี้ไม่ใช่วิดีโอเดี่ยวที่รองรับ')
+                raise ValueError('กรุณาใช้โพสต์วิดีโอเดี่ยว โพสต์รูปภาพหรือหลายวิดีโอยังไม่รองรับ')
             plan = select_plan(info)
             chosen = plan[0]
             if sum(f.get('filesize') or 0 for f in plan) > MAX_FILE_BYTES:
                 raise ValueError(f'ไฟล์ใหญ่เกิน {MAX_FILE_BYTES // 1048576} MB')
-            update(job_id, title=info.get('title') or 'TikTok video',
+            update(job_id, title=info.get('title') or 'Video',
                    creator=info.get('uploader') or '',
                    resolution=f"{chosen.get('width') or '?'} × {chosen.get('height') or '?'}")
             # Reuse extracted metadata and source request headers, without re-extraction.
@@ -242,7 +265,7 @@ def download(job_id, url):
             error_code = type(error).__name__
             if isinstance(error, DownloadError) and 'no video formats found' in str(error).lower():
                 error_code = 'NO_VIDEO_FORMATS'
-                message = ('อ่านลิงก์ TikTok ได้ แต่ไม่พบไฟล์วิดีโอที่ตัวดาวน์โหลดเข้าถึงได้ '
+                message = ('อ่านลิงก์ได้ แต่ไม่พบไฟล์วิดีโอที่ตัวดาวน์โหลดเข้าถึงได้ '
                            'คลิปนี้จึงยังดาวน์โหลดไม่ได้ ไม่ใช่ปัญหาคิวเต็ม')
             update(job_id, state='error', message=message, percent=None,
                    error_code=error_code, retry_in_seconds=None, finished=time.time())
@@ -329,7 +352,7 @@ def file_download(job_id):
             return jsonify(error='ไฟล์ยังไม่พร้อมหรือหมดอายุแล้ว'), 404
         output_format = job.get('output_format', 'mp4')
         return send_file(DOWNLOADS / job_id / f'video.{output_format}', as_attachment=True,
-                         download_name=f'tiktok-{job_id[:8]}.{output_format}',
+                         download_name=f'clearclip-{job_id[:8]}.{output_format}',
                          mimetype=MIME_TYPES[output_format])
 
 
