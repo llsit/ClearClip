@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="app-token" content="__TOKEN__">
-  <title>ClearClip — TikTok Downloader</title>
+  <title>ClearClip — Video Downloader</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=__VERSION__">
   <link rel="stylesheet" href="/static/style.css?v=__VERSION__">
   <script src="/static/app.js?v=__VERSION__" defer></script>
@@ -11,12 +11,12 @@
 <body>
   <header><a class="brand" href="/"><img class="brand-icon" src="/static/favicon.svg" width="32" height="32" alt=""> ClearClip<span>LOCAL STUDIO</span></a><span class="online">● พร้อมใช้งานบนเครื่องคุณ</span></header>
   <main>
-    <div class="eyebrow">TIKTOK VIDEO DOWNLOADER</div>
+    <div class="eyebrow">TIKTOK · FACEBOOK · INSTAGRAM</div>
     <h1>เก็บคลิปที่ชอบ<br><span>คมชัดทุกรายละเอียด.</span></h1>
-    <p class="intro">วางลิงก์ แล้วเก็บวิดีโอคุณภาพสูงสุดที่มี<br>เลือกไฟล์จากต้นทางที่ไม่มีลายน้ำ พร้อมเสียงต้นฉบับ</p>
+    <p class="intro">วางลิงก์ แล้วเก็บวิดีโอคุณภาพสูงสุดที่มี<br>รองรับ TikTok, Facebook และ Instagram พร้อมเสียงต้นฉบับ</p>
     <section class="panel" aria-label="ดาวน์โหลดวิดีโอ">
       <form id="download-form">
-        <label for="url">ลิงก์วิดีโอ TikTok</label>
+        <label for="url">ลิงก์วิดีโอ TikTok / Facebook / Instagram</label>
         <div class="input-row"><input id="url" name="url" type="url" placeholder="https://www.tiktok.com/@creator/video/..." required autocomplete="off" maxlength="2048"><button id="submit" type="submit">ดาวน์โหลด <span>↓</span></button></div>
         <div class="format-row"><div><label for="format">รูปแบบไฟล์</label><select id="format" name="format" aria-describedby="format-note"><option value="mp4" selected>MP4 — แนะนำ</option><option value="mov">MOV — QuickTime</option><option value="avi">AVI</option></select></div><p id="format-note">MP4: เก็บไฟล์ต้นทางพร้อมเสียง ไม่บีบอัดซ้ำ</p></div>
         <div class="settings"><span>✦ คุณภาพสูงสุดอัตโนมัติ</span><span>พร้อมเสียงต้นฉบับ</span></div>
@@ -28,8 +28,8 @@
         <a id="save" class="save" hidden>บันทึกไฟล์ MP4 ↓</a>
       </div>
     </section>
-    <div class="steps"><article><b>01</b><h2>คัดลอกลิงก์</h2><p>เปิด TikTok แล้วเลือก<br>แชร์ → คัดลอกลิงก์</p></article><article><b>02</b><h2>เลือกรูปแบบแล้วดาวน์โหลด</h2><p>MP4, MOV หรือ AVI<br>ระบบเลือกคุณภาพให้คุณ</p></article><article><b>03</b><h2>เก็บไว้ดูได้ทุกเมื่อ</h2><p>บันทึกวิดีโอลงเครื่อง<br>พร้อมภาพและเสียง</p></article></div>
-    <aside>ความคมชัดขึ้นกับไฟล์ต้นทาง ไม่อัปสเกลภาพและไม่ลบลายน้ำที่ฝังอยู่ในภาพ หากไม่พบแหล่งไฟล์ที่รองรับ ระบบจะแจ้งให้ทราบ</aside>
+    <div class="steps"><article><b>01</b><h2>คัดลอกลิงก์</h2><p>เปิดแอปต้นทางแล้วเลือก<br>แชร์ → คัดลอกลิงก์</p></article><article><b>02</b><h2>เลือกรูปแบบแล้วดาวน์โหลด</h2><p>MP4, MOV หรือ AVI<br>ระบบเลือกคุณภาพให้คุณ</p></article><article><b>03</b><h2>เก็บไว้ดูได้ทุกเมื่อ</h2><p>บันทึกวิดีโอลงเครื่อง<br>พร้อมภาพและเสียง</p></article></div>
+    <aside>รองรับโพสต์วิดีโอเดี่ยวที่เปิดสาธารณะและเข้าถึงได้โดยไม่ล็อกอิน ความคมชัดขึ้นกับไฟล์ต้นทาง ไม่อัปสเกลภาพและไม่ลบลายน้ำที่ฝังอยู่ในภาพ หากไม่พบแหล่งไฟล์ที่รองรับ ระบบจะแจ้งให้ทราบ</aside>
   </main>
   <footer><span>ClearClip <strong class="version">v__VERSION__</strong> / เก็บรายละเอียด เก็บช่วงเวลา</span><span>ใช้กับวิดีโอของคุณหรือที่คุณได้รับอนุญาตให้ดาวน์โหลด</span></footer>
 </body>
