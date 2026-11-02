@@ -22,6 +22,40 @@ def test_valid_url(url):
     assert module.validate_url(url + '?tracking=1') == url
 
 
+@pytest.mark.parametrize('url', [
+    'https://www.facebook.com/reel/12345/',
+    'https://www.facebook.com/page/videos/12345/',
+    'https://www.facebook.com/share/v/ABcd123/',
+    'https://fb.watch/abc-123/',
+    'https://www.instagram.com/reel/AB_cd-12/',
+    'https://www.instagram.com/p/AB_cd-12/',
+])
+def test_social_video_urls(url):
+    assert module.validate_url(url + '?tracking=x') == url
+
+
+def test_facebook_watch_keeps_required_id():
+    assert module.validate_url('https://www.facebook.com/watch/?v=12345&tracking=x') == 'https://www.facebook.com/watch/?v=12345'
+
+
+@pytest.mark.parametrize('url', ['https://facebook.com.evil.com/reel/123/',
+    'https://www.instagram.com/profile/', 'https://www.facebook.com/l.php?u=https://evil.com',
+    'https://www.instagram.com/stories/user/123/'])
+def test_unsupported_social_urls(url):
+    with pytest.raises(ValueError):
+        module.validate_url(url)
+
+
+def test_social_extractors_enabled():
+    with module.YoutubeDL({'quiet':True, 'allowed_extractors':module.EXTRACTORS}) as ydl:
+        assert {'Facebook', 'FacebookReel', 'Instagram', 'TikTok'}.issubset(ydl._ies)
+
+
+def test_progressive_unknown_codec_metadata():
+    video = {'format_id':'hd', 'url':'https://example.com/video.mp4', 'ext':'mp4', 'height':720}
+    assert module.select_plan({'formats':[video]})[0]['format_id'] == 'hd'
+
+
 def fmt(id, width=1080, height=1920, **kwargs):
     return dict(format_id=id, width=width, height=height, ext='mp4',
                 url='https://example.com/video.mp4', vcodec='h264', acodec='aac', **kwargs)
@@ -50,8 +84,7 @@ def test_split_stream_plan_prefers_hd_and_requires_audio():
     assert module.select_plan({'formats':[low, hd]}) == [low]
     marked = dict(hd, format_note='watermarked')
     assert module.select_plan({'formats':[low, marked, audio]}) == [low]
-    with pytest.raises(ValueError):
-        module.select_plan({'formats':[hd]})
+    assert module.select_plan({'formats':[hd]}) == [hd]
 
 
 def test_video_only_rejected():
