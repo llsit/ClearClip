@@ -35,7 +35,7 @@ def convert_video(source, target_format, max_bytes, timeout=600):
     output = source.with_suffix('.' + target_format)
     command = [imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-loglevel', 'error',
                '-nostdin', '-y', '-threads', '1', '-i', str(source),
-               '-map', '0:v:0', '-map', '0:a:0', '-map_metadata', '-1']
+               '-map', '0:v:0', '-map', '0:a:0?', '-map_metadata', '-1']
     if target_format == 'mov':
         command += ['-c', 'copy', '-movflags', '+faststart']
     else:
